@@ -2,78 +2,90 @@ import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StockChart } from "./StockChart";
-import { TrendingUp, TrendingDown } from "lucide-react";
-
-interface StockData {
-  symbol: string;
-  name: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  rsi: number;
-}
+import { TrendingUp, TrendingDown, RefreshCw } from "lucide-react";
+import { stockApi, type StockData } from "@/services/stockApi";
 
 interface StockItemProps {
-  stock: StockData;
+  initialStock: StockData;
 }
 
-export const StockItem = ({ stock }: StockItemProps) => {
+export const StockItem = ({ initialStock }: StockItemProps) => {
   const [selectedInterval, setSelectedInterval] = useState<number | null>(null);
-  const [currentPrice, setCurrentPrice] = useState(stock.price);
-  const [currentChange, setCurrentChange] = useState(stock.change);
-  const [currentRSI, setCurrentRSI] = useState(stock.rsi);
+  const [stockData, setStockData] = useState<StockData>(initialStock);
+  const [loading, setLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
-  // Simulate live price updates
+  // Fetch real-time stock data
+  const fetchStockData = async () => {
+    setLoading(true);
+    try {
+      const data = await stockApi.getStockData(initialStock.symbol);
+      setStockData(data);
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error(`Error fetching ${initialStock.symbol}:`, error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-refresh every 30 seconds
   useEffect(() => {
+    fetchStockData();
+    
     const interval = setInterval(() => {
-      const priceVariation = (Math.random() - 0.5) * 2; // Random change between -1 and 1
-      const newPrice = Math.max(0, currentPrice + priceVariation);
-      const newChange = newPrice - stock.price;
-      const newRSI = Math.min(100, Math.max(0, currentRSI + (Math.random() - 0.5) * 4));
-      
-      setCurrentPrice(newPrice);
-      setCurrentChange(newChange);
-      setCurrentRSI(newRSI);
-    }, 2000);
+      fetchStockData();
+    }, 30000);
 
     return () => clearInterval(interval);
-  }, [currentPrice, stock.price, currentRSI]);
+  }, [initialStock.symbol]);
 
   const intervals = [1, 10, 15, 20];
-  const isPositive = currentChange >= 0;
-  const changePercent = (currentChange / stock.price) * 100;
+  const isPositive = stockData.change >= 0;
 
   return (
     <Card className="p-4 mb-4 bg-card border-border">
       <div className="flex items-center justify-between mb-4">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-2">
-            <h3 className="text-lg font-semibold text-foreground">{stock.symbol}</h3>
+            <h3 className="text-lg font-semibold text-foreground">{stockData.symbol}</h3>
             {isPositive ? (
               <TrendingUp className="w-4 h-4 text-success" />
             ) : (
               <TrendingDown className="w-4 h-4 text-danger" />
             )}
+            <Button
+              variant="ghost"
+              size="sm" 
+              onClick={fetchStockData}
+              disabled={loading}
+              className="ml-2 h-6 w-6 p-0"
+            >
+              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
           </div>
-          <p className="text-sm text-muted-foreground">{stock.name}</p>
+          <p className="text-sm text-muted-foreground">{stockData.name}</p>
+          <p className="text-xs text-muted-foreground">
+            Last updated: {lastUpdated.toLocaleTimeString()}
+          </p>
         </div>
         
         <div className="text-right">
           <div className="text-2xl font-bold text-foreground">
-            ₹{currentPrice.toFixed(2)}
+            ₹{stockData.price.toFixed(2)}
           </div>
           <div className={`text-sm font-medium ${isPositive ? 'text-success' : 'text-danger'}`}>
-            {isPositive ? '+' : ''}₹{currentChange.toFixed(2)} ({changePercent.toFixed(2)}%)
+            {isPositive ? '+' : ''}₹{stockData.change.toFixed(2)} ({stockData.changePercent.toFixed(2)}%)
           </div>
         </div>
         
         <div className="ml-6 text-right">
           <div className="text-xs text-muted-foreground mb-1">RSI</div>
           <div className={`text-lg font-bold ${
-            currentRSI > 70 ? 'text-danger' : 
-            currentRSI < 30 ? 'text-success' : 'text-warning'
+            (stockData.rsi || 0) > 70 ? 'text-danger' : 
+            (stockData.rsi || 0) < 30 ? 'text-success' : 'text-warning'
           }`}>
-            {currentRSI.toFixed(1)}
+            {stockData.rsi?.toFixed(1) || 'N/A'}
           </div>
         </div>
       </div>
@@ -95,9 +107,9 @@ export const StockItem = ({ stock }: StockItemProps) => {
       {selectedInterval && (
         <div className="mt-4">
           <StockChart 
-            symbol={stock.symbol} 
+            symbol={stockData.symbol} 
             interval={selectedInterval}
-            currentPrice={currentPrice}
+            currentPrice={stockData.price}
           />
         </div>
       )}
