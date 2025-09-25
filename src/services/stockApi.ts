@@ -1,4 +1,4 @@
-// Real-time stock data service using Yahoo Finance API
+// Real-time stock data service using Alpha Vantage API
 export interface StockData {
   symbol: string;
   name: string;
@@ -6,6 +6,7 @@ export interface StockData {
   change: number;
   changePercent: number;
   rsi?: number;
+  lastUpdated: string;
 }
 
 export interface ChartDataPoint {
@@ -17,19 +18,20 @@ export interface ChartDataPoint {
   volume: number;
 }
 
-// NSE symbol mapping for Yahoo Finance API
+// NSE symbol mapping for Alpha Vantage API
 const NSE_SYMBOLS = {
-  'TATASTEEL': 'TATASTEEL.NS',
-  'TATAMOTORS': 'TATAMOTORS.NS', 
-  'NIFTY50': '^NSEI',
-  'INDIAVIX': '^INDIAVIX',
-  'HDFCBANK': 'HDFCBANK.NS'
+  'TATASTEEL': 'TATASTEEL.BSE',
+  'TATAMOTORS': 'TATAMOTORS.BSE', 
+  'NIFTY50': 'NIFTY50.BSE',
+  'INDIAVIX': 'INDIAVIX.BSE',
+  'HDFCBANK': 'HDFCBANK.BSE'
 };
 
 export class StockApiService {
   private static instance: StockApiService;
   private cache = new Map<string, { data: StockData; timestamp: number }>();
   private CACHE_DURATION = 30000; // 30 seconds cache
+  private apiKey: string | null = null;
 
   static getInstance(): StockApiService {
     if (!StockApiService.instance) {
@@ -38,7 +40,19 @@ export class StockApiService {
     return StockApiService.instance;
   }
 
+  setApiKey(key: string): void {
+    this.apiKey = key;
+  }
+
+  getApiKey(): string | null {
+    return this.apiKey;
+  }
+
   async getStockData(symbol: string): Promise<StockData> {
+    if (!this.apiKey) {
+      return this.getMockData(symbol);
+    }
+
     const cacheKey = symbol;
     const cached = this.cache.get(cacheKey);
     
@@ -47,15 +61,18 @@ export class StockApiService {
     }
 
     try {
-      const yahooSymbol = NSE_SYMBOLS[symbol as keyof typeof NSE_SYMBOLS] || symbol;
+      const alphaVantageSymbol = NSE_SYMBOLS[symbol as keyof typeof NSE_SYMBOLS] || symbol;
       
-      // Using Yahoo Finance API through RapidAPI or similar service
-      const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}`, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      // Using Alpha Vantage API for real-time data
+      const response = await fetch(
+        `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${alphaVantageSymbol}&apikey=${this.apiKey}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json'
+          }
         }
-      });
+      );
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -63,29 +80,27 @@ export class StockApiService {
 
       const data = await response.json();
       
-      if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
-        throw new Error('No data received from API');
+      if (data['Error Message'] || !data['Global Quote']) {
+        throw new Error(data['Error Message'] || 'No data received from API');
       }
 
-      const result = data.chart.result[0];
-      const meta = result.meta;
-      const quote = result.indicators.quote[0];
-      
-      const currentPrice = meta.regularMarketPrice || quote.close[quote.close.length - 1];
-      const previousClose = meta.previousClose;
+      const quote = data['Global Quote'];
+      const currentPrice = parseFloat(quote['05. price']);
+      const previousClose = parseFloat(quote['08. previous close']);
       const change = currentPrice - previousClose;
-      const changePercent = (change / previousClose) * 100;
+      const changePercent = parseFloat(quote['10. change percent'].replace('%', ''));
 
-      // Calculate RSI (simplified version)
-      const rsi = await this.calculateRSI(quote.close.slice(-14));
+      // Get historical data for RSI calculation
+      const rsi = await this.calculateRSIFromAPI(alphaVantageSymbol);
 
       const stockData: StockData = {
         symbol,
-        name: meta.longName || symbol,
+        name: this.getCompanyName(symbol),
         price: currentPrice,
         change,
         changePercent,
-        rsi
+        rsi,
+        lastUpdated: quote['07. latest trading day']
       };
 
       this.cache.set(cacheKey, { data: stockData, timestamp: Date.now() });
@@ -99,32 +114,46 @@ export class StockApiService {
   }
 
   async getChartData(symbol: string, interval: number): Promise<ChartDataPoint[]> {
+    if (!this.apiKey) {
+      return this.getMockChartData();
+    }
+
     try {
-      const yahooSymbol = NSE_SYMBOLS[symbol as keyof typeof NSE_SYMBOLS] || symbol;
-      const period = this.getYahooPeriod(interval);
+      const alphaVantageSymbol = NSE_SYMBOLS[symbol as keyof typeof NSE_SYMBOLS] || symbol;
+      const intervalStr = this.getAlphaVantageInterval(interval);
       
       const response = await fetch(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=${period}&range=1d`,
+        `https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${alphaVantageSymbol}&interval=${intervalStr}&apikey=${this.apiKey}`,
         {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'Content-Type': 'application/json'
           }
         }
       );
 
       const data = await response.json();
-      const result = data.chart.result[0];
-      const timestamps = result.timestamp;
-      const quote = result.indicators.quote[0];
+      const timeSeries = data[`Time Series (${intervalStr})`];
+      
+      if (!timeSeries) {
+        throw new Error('No time series data available');
+      }
 
-      return timestamps.map((timestamp: number, index: number) => ({
-        timestamp: timestamp * 1000,
-        open: quote.open[index] || 0,
-        high: quote.high[index] || 0, 
-        low: quote.low[index] || 0,
-        close: quote.close[index] || 0,
-        volume: quote.volume[index] || 0
-      })).filter((point: ChartDataPoint) => point.close > 0);
+      const chartData: ChartDataPoint[] = [];
+      const timestamps = Object.keys(timeSeries).sort();
+
+      for (const timestamp of timestamps.slice(-50)) { // Last 50 points
+        const point = timeSeries[timestamp];
+        chartData.push({
+          timestamp: new Date(timestamp).getTime(),
+          open: parseFloat(point['1. open']),
+          high: parseFloat(point['2. high']),
+          low: parseFloat(point['3. low']),
+          close: parseFloat(point['4. close']),
+          volume: parseInt(point['5. volume'])
+        });
+      }
+
+      return chartData;
 
     } catch (error) {
       console.error(`Error fetching chart data for ${symbol}:`, error);
@@ -132,12 +161,44 @@ export class StockApiService {
     }
   }
 
-  private getYahooPeriod(minutes: number): string {
-    if (minutes === 1) return '1m';
-    if (minutes <= 5) return '5m';
-    if (minutes <= 15) return '15m';
-    if (minutes <= 30) return '30m';
-    return '1h';
+  private getAlphaVantageInterval(minutes: number): string {
+    if (minutes === 1) return '1min';
+    if (minutes <= 5) return '5min';
+    if (minutes <= 15) return '15min';
+    if (minutes <= 30) return '30min';
+    return '60min';
+  }
+
+  private getCompanyName(symbol: string): string {
+    const names = {
+      'TATASTEEL': 'Tata Steel Limited',
+      'TATAMOTORS': 'Tata Motors Limited',
+      'NIFTY50': 'Nifty 50 Index',
+      'INDIAVIX': 'India VIX',
+      'HDFCBANK': 'HDFC Bank Limited'
+    };
+    return names[symbol as keyof typeof names] || symbol;
+  }
+
+  private async calculateRSIFromAPI(symbol: string): Promise<number> {
+    if (!this.apiKey) return 50;
+    
+    try {
+      const response = await fetch(
+        `https://www.alphavantage.co/query?function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close&apikey=${this.apiKey}`
+      );
+      
+      const data = await response.json();
+      const technicalAnalysis = data['Technical Analysis: RSI'];
+      
+      if (!technicalAnalysis) return 50;
+      
+      const latestDate = Object.keys(technicalAnalysis)[0];
+      return parseFloat(technicalAnalysis[latestDate]['RSI']);
+    } catch (error) {
+      console.error('Error calculating RSI:', error);
+      return 50;
+    }
   }
 
   private async calculateRSI(prices: number[]): Promise<number> {
@@ -169,7 +230,8 @@ export class StockApiService {
         price: 118.45,
         change: 2.35,
         changePercent: 2.02,
-        rsi: 65.2
+        rsi: 65.2,
+        lastUpdated: 'API Key Required'
       },
       'TATAMOTORS': {
         symbol: 'TATAMOTORS', 
@@ -177,7 +239,8 @@ export class StockApiService {
         price: 924.80,
         change: -15.60,
         changePercent: -1.66,
-        rsi: 42.8
+        rsi: 42.8,
+        lastUpdated: 'API Key Required'
       },
       'NIFTY50': {
         symbol: 'NIFTY50',
@@ -185,7 +248,8 @@ export class StockApiService {
         price: 24587.20,
         change: 145.30,
         changePercent: 0.59,
-        rsi: 58.4
+        rsi: 58.4,
+        lastUpdated: 'API Key Required'
       },
       'INDIAVIX': {
         symbol: 'INDIAVIX',
@@ -193,7 +257,8 @@ export class StockApiService {
         price: 13.45,
         change: -0.87,
         changePercent: -6.08,
-        rsi: 35.6
+        rsi: 35.6,
+        lastUpdated: 'API Key Required'
       },
       'HDFCBANK': {
         symbol: 'HDFCBANK',
@@ -201,7 +266,8 @@ export class StockApiService {
         price: 1687.90,
         change: 23.45,
         changePercent: 1.41,
-        rsi: 52.1
+        rsi: 52.1,
+        lastUpdated: 'API Key Required'
       }
     };
 

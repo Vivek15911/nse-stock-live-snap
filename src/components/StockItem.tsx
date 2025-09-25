@@ -2,43 +2,21 @@ import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StockChart } from "./StockChart";
-import { TrendingUp, TrendingDown, RefreshCw } from "lucide-react";
+import { TrendingUp, TrendingDown } from "lucide-react";
 import { stockApi, type StockData } from "@/services/stockApi";
 
 interface StockItemProps {
   initialStock: StockData;
+  onRefresh?: () => void;
 }
 
-export const StockItem = ({ initialStock }: StockItemProps) => {
+export const StockItem = ({ initialStock, onRefresh }: StockItemProps) => {
   const [selectedInterval, setSelectedInterval] = useState<number | null>(null);
   const [stockData, setStockData] = useState<StockData>(initialStock);
-  const [loading, setLoading] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
-  // Fetch real-time stock data
-  const fetchStockData = async () => {
-    setLoading(true);
-    try {
-      const data = await stockApi.getStockData(initialStock.symbol);
-      setStockData(data);
-      setLastUpdated(new Date());
-    } catch (error) {
-      console.error(`Error fetching ${initialStock.symbol}:`, error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Auto-refresh every 30 seconds
   useEffect(() => {
-    fetchStockData();
-    
-    const interval = setInterval(() => {
-      fetchStockData();
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [initialStock.symbol]);
+    setStockData(initialStock);
+  }, [initialStock]);
 
   const intervals = [1, 10, 15, 20];
   const isPositive = stockData.change >= 0;
@@ -54,19 +32,10 @@ export const StockItem = ({ initialStock }: StockItemProps) => {
             ) : (
               <TrendingDown className="w-4 h-4 text-danger" />
             )}
-            <Button
-              variant="ghost"
-              size="sm" 
-              onClick={fetchStockData}
-              disabled={loading}
-              className="ml-2 h-6 w-6 p-0"
-            >
-              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
           </div>
           <p className="text-sm text-muted-foreground">{stockData.name}</p>
           <p className="text-xs text-muted-foreground">
-            Last updated: {lastUpdated.toLocaleTimeString()}
+            Last updated: {stockData.lastUpdated}
           </p>
         </div>
         
