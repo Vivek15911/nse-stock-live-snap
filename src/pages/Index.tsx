@@ -1,9 +1,8 @@
 import { StockItem } from "@/components/StockItem";
-import { ApiKeyInput } from "@/components/ApiKeyInput";
 import { useEffect, useState } from "react";
 import { stockApi, type StockData } from "@/services/stockApi";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, CheckCircle } from "lucide-react";
 
 const initialStocks = [
   { symbol: "TATASTEEL", name: "Tata Steel Limited" },
@@ -35,7 +34,7 @@ const Index = () => {
   };
 
   const handleApiKeySet = (apiKey: string) => {
-    stockApi.setApiKey(apiKey);
+    // No longer needed - using free Indian API
     setHasApiKey(true);
     fetchAllStocks();
   };
@@ -58,10 +57,8 @@ const Index = () => {
   };
 
   useEffect(() => {
-    const existingApiKey = stockApi.getApiKey();
-    if (existingApiKey) {
-      setHasApiKey(true);
-    }
+    // No API key needed for Indian API - just fetch data
+    setHasApiKey(true);
     fetchAllStocks();
   }, []);
 
@@ -93,7 +90,7 @@ const Index = () => {
             </div>
             <Button
               onClick={handleRefreshAll}
-              disabled={refreshing || !hasApiKey}
+              disabled={refreshing}
               className="flex items-center gap-2"
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
@@ -105,7 +102,17 @@ const Index = () => {
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
-        <ApiKeyInput onApiKeySet={handleApiKeySet} hasApiKey={hasApiKey} />
+        <div className="mb-6">
+          <div className="bg-success/10 border border-success/30 rounded-lg p-4">
+            <div className="flex items-center gap-3">
+              <CheckCircle className="w-5 h-5 text-success" />
+              <div>
+                <h3 className="font-medium text-foreground">Live NSE Data Active</h3>
+                <p className="text-sm text-muted-foreground">Real-time NSE stock prices updated every 30 seconds</p>
+              </div>
+            </div>
+          </div>
+        </div>
         
         <div className="space-y-1">
           {stocksData.map((stock) => (
