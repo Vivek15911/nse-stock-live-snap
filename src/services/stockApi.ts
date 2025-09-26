@@ -20,11 +20,11 @@ export interface ChartDataPoint {
 
 // NSE symbol mapping for Alpha Vantage API
 const NSE_SYMBOLS = {
-  'TATASTEEL': 'TATASTEEL.BSE',
-  'TATAMOTORS': 'TATAMOTORS.BSE', 
-  'NIFTY50': 'NIFTY50.BSE',
-  'INDIAVIX': 'INDIAVIX.BSE',
-  'HDFCBANK': 'HDFCBANK.BSE'
+  'TATASTEEL': 'TATASTEEL.NS',
+  'TATAMOTORS': 'TATAMOTORS.NS', 
+  'NIFTY50': '^NSEI',
+  'INDIAVIX': '^INDIAVIX',
+  'HDFCBANK': 'HDFCBANK.NS'
 };
 
 export class StockApiService {
@@ -63,6 +63,8 @@ export class StockApiService {
     try {
       const alphaVantageSymbol = NSE_SYMBOLS[symbol as keyof typeof NSE_SYMBOLS] || symbol;
       
+      console.log(`Fetching data for ${symbol} (${alphaVantageSymbol}) with API key: ${this.apiKey?.substring(0, 8)}...`);
+      
       // Using Alpha Vantage API for real-time data
       const response = await fetch(
         `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${alphaVantageSymbol}&apikey=${this.apiKey}`,
@@ -75,13 +77,26 @@ export class StockApiService {
       );
 
       if (!response.ok) {
+        console.error(`HTTP error for ${symbol}:`, response.status, response.statusText);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log(`API response for ${symbol}:`, data);
       
-      if (data['Error Message'] || !data['Global Quote']) {
-        throw new Error(data['Error Message'] || 'No data received from API');
+      if (data['Error Message']) {
+        console.error(`API Error for ${symbol}:`, data['Error Message']);
+        throw new Error(data['Error Message']);
+      }
+      
+      if (data['Note']) {
+        console.warn(`API Rate limit for ${symbol}:`, data['Note']);
+        throw new Error('API rate limit exceeded. Please try again later.');
+      }
+      
+      if (!data['Global Quote']) {
+        console.error(`No Global Quote data for ${symbol}:`, data);
+        throw new Error('No quote data received from API');
       }
 
       const quote = data['Global Quote'];
@@ -115,12 +130,15 @@ export class StockApiService {
 
   async getChartData(symbol: string, interval: number): Promise<ChartDataPoint[]> {
     if (!this.apiKey) {
+      console.log(`No API key for chart data ${symbol}, using mock data`);
       return this.getMockChartData();
     }
 
     try {
       const alphaVantageSymbol = NSE_SYMBOLS[symbol as keyof typeof NSE_SYMBOLS] || symbol;
       const intervalStr = this.getAlphaVantageInterval(interval);
+      
+      console.log(`Fetching chart data for ${symbol} (${alphaVantageSymbol}) with interval ${intervalStr}`);
       
       const response = await fetch(
         `https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${alphaVantageSymbol}&interval=${intervalStr}&apikey=${this.apiKey}`,
@@ -131,10 +149,28 @@ export class StockApiService {
         }
       );
 
+      if (!response.ok) {
+        console.error(`Chart data HTTP error for ${symbol}:`, response.status);
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const data = await response.json();
+      console.log(`Chart data response for ${symbol}:`, Object.keys(data));
+      
+      if (data['Error Message']) {
+        console.error(`Chart API Error for ${symbol}:`, data['Error Message']);
+        throw new Error(data['Error Message']);
+      }
+      
+      if (data['Note']) {
+        console.warn(`Chart API Rate limit for ${symbol}:`, data['Note']);
+        throw new Error('API rate limit exceeded for chart data');
+      }
+      
       const timeSeries = data[`Time Series (${intervalStr})`];
       
       if (!timeSeries) {
+        console.error(`No time series data for ${symbol}:`, Object.keys(data));
         throw new Error('No time series data available');
       }
 
@@ -184,19 +220,42 @@ export class StockApiService {
     if (!this.apiKey) return 50;
     
     try {
+      console.log(`Fetching RSI for ${symbol}`);
       const response = await fetch(
         `https://www.alphavantage.co/query?function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close&apikey=${this.apiKey}`
       );
       
+      if (!response.ok) {
+        console.error(`RSI HTTP error for ${symbol}:`, response.status);
+        return 50;
+      }
+      
       const data = await response.json();
+      console.log(`RSI response for ${symbol}:`, Object.keys(data));
+      
+      if (data['Error Message']) {
+        console.error(`RSI API Error for ${symbol}:`, data['Error Message']);
+        return 50;
+      }
+      
+      if (data['Note']) {
+        console.warn(`RSI API Rate limit for ${symbol}:`, data['Note']);
+        return 50;
+      }
+      
       const technicalAnalysis = data['Technical Analysis: RSI'];
       
-      if (!technicalAnalysis) return 50;
+      if (!technicalAnalysis) {
+        console.error(`No RSI data for ${symbol}`);
+        return 50;
+      }
       
       const latestDate = Object.keys(technicalAnalysis)[0];
-      return parseFloat(technicalAnalysis[latestDate]['RSI']);
+      const rsiValue = parseFloat(technicalAnalysis[latestDate]['RSI']);
+      console.log(`RSI for ${symbol}: ${rsiValue}`);
+      return rsiValue;
     } catch (error) {
-      console.error('Error calculating RSI:', error);
+      console.error(`Error calculating RSI for ${symbol}:`, error);
       return 50;
     }
   }
